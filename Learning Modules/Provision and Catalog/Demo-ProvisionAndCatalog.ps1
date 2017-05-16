@@ -1,7 +1,7 @@
 ﻿# Helper script for provisioning and de-provisioning tenants and their databases.
 
 # IMPORTANT: Before provisioning tenants using this script ensure the catalog is initialized using 
-# http://demo.wtp.<USER>.trafficmanager.net
+# http://events.wtp.<USER>.trafficmanager.net
 
 # The name of the venue to be added/removed as a tenant 
 $TenantName = "Red Maple Racing"
@@ -9,6 +9,9 @@ $TenantName = "Red Maple Racing"
 # The type of venue. Needed when adding a tenant 
 $VenueType = "motorracing"
 # Supported venue types: blues, classicalmusic, dance, jazz, judo, motorracing, multipurpose, opera, rockmusic, soccer 
+
+# Postal Code of the venue
+$PostalCode = "98052"
 
 $DemoScenario = 1
 <# Select the demo scenario to run
@@ -48,13 +51,11 @@ if ($DemoScenario -eq 1)
         -ServerName $serverName `
         -PoolName $poolName `
         -VenueType $VenueType `
+        -PostalCode $PostalCode `
         -ErrorAction Stop `
         > $null
 
     Write-Output "Provisioning complete for tenant '$TenantName'"
-
-    # Open the admin page for the new venue
-    Start-Process "http://admin.wtp.$($wtpUser.Name).trafficmanager.net/$(Get-NormalizedTenantName $TenantName)"
 
     # Open the events page for the new venue
     Start-Process "http://events.wtp.$($wtpUser.Name).trafficmanager.net/$(Get-NormalizedTenantName $TenantName)"

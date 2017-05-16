@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-  Creates an Elastic job account   
+  Creates an elastic job account and associated database   
 
 .DESCRIPTION
   Creates the Job account database and then the job account. Both are created in the resource group
@@ -23,7 +23,6 @@ Import-Module "$PSScriptRoot\..\Common\SubscriptionManagement" -Force
 Import-Module "$PSScriptRoot\..\WtpConfig" -Force
 
 $config = Get-Configuration
-$TenantName = "Contoso Concert Hall"
 
 # Get Azure credentials if not already logged on. 
 Initialize-Subscription
@@ -36,13 +35,38 @@ if(!$resourceGroup)
     throw "Resource group '$WtpResourceGroupName' does not exist.  Exiting..."
 }
 
-$catalogServerName = $config.CatalogServerNameStem + $WtpUser
-$fullyQualfiedCatalogServerName = $catalogServerName + ".database.windows.net"
+$jobAccountServerName = $config.jobAccountServerNameStem + $WtpUser
+$fullyQualifiedjobAccountServerName = $jobAccountServerName + ".database.windows.net"
 $databaseName = $config.JobAccountDatabaseName
+
+# Check if the job account already exists and the latest Azure PowerShell SDK has been installed 
+try 
+{
+    $jobaccount = Get-AzureRmSqlJobAccount -ResourceGroupName $WtpResourceGroupName `
+        -ServerName $jobAccountServerName `
+        -JobAccountName $($config.JobAccount) 
+}
+catch 
+{
+    if ($_.Exception.Message -like "*'Get-AzureRmSqlJobAccount' is not recognized*")
+    {
+        Write-Error "'Get-AzureRmSqlJobAccount' not found. Download and install the Azure PowerShell SDK that includes support for Elastic Jobs: 
+        https://github.com/jaredmoo/azure-powershell/releases"
+    }
+}
+
+# Check if current Azure subscription is signed up for Preview of Elastic jobs 
+$registrationStatus = Get-AzureRmProviderFeature -ProviderName Microsoft.Sql -FeatureName sqldb-JobAccounts
+
+if ($registrationStatus.RegistrationState -eq "NotRegistered")
+{
+    Write-Error "Your current subscription is not white-listed for the preview of Elastic jobs. Please contact Microsoft to white-list your subscription."
+    exit
+}
 
 # Check the job account database already exists
 $database = Get-AzureRmSqlDatabase -ResourceGroupName $WtpResourceGroupName `
-	-ServerName $catalogServerName `
+    -ServerName $jobAccountServerName `
 	-DatabaseName $($config.JobAccountDatabaseName) `
 	-ErrorAction SilentlyContinue
 
@@ -51,14 +75,35 @@ try
 {
 	if (!$database)
 	{
-		Write-output "Deploying job account database: '$($config.JobAccountDatabaseName)'..."
+		Write-output "Deploying job account database: '$($config.JobAccountDatabaseName)' on server '$fullyQualifiedjobAccountServerName'..."
+        
+        # Create the job account server - continue if it already exists
+
+        New-AzureRmSqlServer `
+            -ResourceGroupName $WtpResourceGroupName `
+            -Location $config.JobAccountDeploymentLocation `
+            -ServerName $jobAccountServerName `
+            -SqlAdministratorCredentials $(New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $config.JobAccountAdminUserName, $(ConvertTo-SecureString -String $config.JobAccountAdminPassword -AsPlainText -Force)) `
+            -ErrorAction SilentlyContinue `
+            > $null
+
+        # Open firewall for job account server
+        New-AzureRmSqlServerFirewallRule `
+            -ResourceGroupName $WtpResourceGroupName `
+            -ServerName $jobAccountServerName `
+            -FirewallRuleName "Open" `
+            -StartIpAddress 0.0.0.0 `
+            -EndIpAddress 255.255.255.255 `
+            -ErrorAction SilentlyContinue `
+            > $null
 		
 		# Create the job account database
 		New-AzureRmSqlDatabase `
 			-ResourceGroupName $WtpResourceGroupName `
-			-ServerName $catalogServerName `
+			-ServerName $jobAccountServerName `
 			-DatabaseName $($config.JobAccountDatabaseName) `
-			-RequestedServiceObjectiveName "S2"	
+			-RequestedServiceObjectiveName "S2" `
+            > $null	
 	}
  }
 catch
@@ -67,12 +112,6 @@ catch
 	Write-Error "An error occured deploying the job account database"
 	throw
 }
-
-# Check the job account already exists
-$jobaccount = Get-AzureRmSqlJobAccount -ResourceGroupName $WtpResourceGroupName `
-    -ServerName $CatalogServerName `
-    -JobAccountName $($config.JobAccount) `
-	-ErrorAction SilentlyContinue
 
 # Create the job account if it doesn't already exist
 try
@@ -83,10 +122,11 @@ try
 		
 		# Create the job account
 		New-AzureRmSqlJobAccount `
-			-ServerName $CatalogServerName `
+            -ServerName $jobAccountServerName `
 			-JobAccountName $($config.JobAccount) `
 			-DatabaseName $($config.JobAccountDatabaseName) `
-			-ResourceGroupName $($WtpResourceGroupName)
+			-ResourceGroupName $($WtpResourceGroupName) `
+            > $null
 	}
  }
 catch
@@ -96,16 +136,17 @@ catch
 	throw
 }
 
+$credentialName = $config.JobAccountCredentialName
 $commandText = "
     CREATE MASTER KEY;
     GO
 
-    CREATE DATABASE SCOPED CREDENTIAL [mydemocred]
-        WITH IDENTITY = N'$($config.CatalogAdminUserName)', SECRET = N'$($config.CatalogAdminPassword)';
+    CREATE DATABASE SCOPED CREDENTIAL [$credentialName]
+        WITH IDENTITY = N'$($config.JobAccountAdminUserName)', SECRET = N'$($config.JobAccountAdminPassword)';
     GO
     
     CREATE DATABASE SCOPED CREDENTIAL [myrefreshcred]
-        WITH IDENTITY = N'$($config.CatalogAdminUserName)', SECRET = N'$($config.CatalogAdminPassword)';
+        WITH IDENTITY = N'$($config.JobAccountAdminUserName)', SECRET = N'$($config.JobAccountAdminPassword)';
     GO
     PRINT N'Database scoped credentials created.';
     "
@@ -115,9 +156,9 @@ $commandText = "
     try
     {    
 		Invoke-Sqlcmd `
-		-ServerInstance $fullyQualfiedCatalogServerName `
-		-Username $config.CatalogAdminUserName `
-		-Password $config.CatalogAdminPassword `
+        -ServerInstance $fullyQualifiedjobAccountServerName `
+		-Username $config.JobAccountAdminUserName `
+        -Password $config.JobAccountAdminPassword `
 		-Database $config.JobAccountDatabaseName `
 		-Query $commandText `
 		-ConnectionTimeout 30 `
@@ -129,9 +170,9 @@ $commandText = "
         #retry once if fails. Query is idempotent.
         Start-Sleep 2
 		Invoke-Sqlcmd `
-		-ServerInstance $fullyQualfiedCatalogServerName `
-		-Username $config.CatalogAdminUserName `
-		-Password $config.CatalogAdminPassword `
+        -ServerInstance $fullyQualifiedjobAccountServerName `
+		-Username $config.JobAccountAdminUserName `
+        -Password $config.JobAccountAdminPassword `
 		-Database $config.JobAccountDatabaseName `
 		-Query $commandText `
 		-ConnectionTimeout 30 `
@@ -141,5 +182,3 @@ $commandText = "
 	
 Write-Output "Deployment of job account database '$($config.JobAccountDatabaseName)' and job account '$($config.JobAccount)' are complete."
 
-# Open the admin page for the Contoso Concert Hall tenant to view venue types available
-Start-Process "http://admin.wtp.$WtpUser.trafficmanager.net/$($normalizedTenantName)"

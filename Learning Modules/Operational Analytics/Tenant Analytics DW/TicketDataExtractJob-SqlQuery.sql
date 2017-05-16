@@ -21,7 +21,7 @@ EXEC [jobs].sp_add_target_group_member
 -- Create job to retrieve analytics that are distributed across all the tenants
 EXEC jobs.sp_add_job
 @job_name='Ticket Purchases from all Tenants',
-@description='Collect tenant specific ticket sales data from each tenant database',
+@description='Retrieve tenant telemetry data from all tenants',
 @enabled=1,
 @schedule_interval_type='Once'
 
@@ -31,11 +31,13 @@ SET @server2 = 'catalog-' + @WtpUser + '.database.windows.net'
 EXEC jobs.sp_add_jobstep
 @job_name='Ticket Purchases from all Tenants',
 @command=N'
-WITH Venue_CTE (VenueId, VenueName, VenueType, VenuePostalCode, X)
+WITH Venues_CTE (VenueId, VenueName, VenueType, VenuePostalCode, VenueCapacity, X)
 AS
-   (SELECT TOP 1 Convert(int, HASHBYTES(''md5'',VenueName)) AS VenueId, VenueName, VenueType, PostalCode AS VenuePostalCode, 1 AS X FROM Venue)
-SELECT v.VenueId, v.VenueName, v.VenueType,v.VenuePostalCode, tp.TicketPurchaseId, tp.PurchaseDate, tp.PurchaseTotal, c.CustomerId, c.PostalCode as CustomerPostalCode, c.CountryCode, e.EventId, e.EventName, $(job_execution_id) AS job_execution_id FROM 
-Venue_CTE as v
+   (SELECT TOP 1 Convert(int, HASHBYTES(''md5'',VenueName)) AS VenueId, VenueName, VenueType, PostalCode AS VenuePostalCode,
+		(SELECT SUM ([SeatRows]*[SeatsPerRow]) FROM [dbo].[Sections]) AS VenueCapacity,
+    1 AS X FROM Venues)
+SELECT v.VenueId, v.VenueName, v.VenueType,v.VenuePostalCode, v.VenueCapacity, tp.TicketPurchaseId, tp.PurchaseDate, tp.PurchaseTotal, c.CustomerId, c.PostalCode as CustomerPostalCode, c.CountryCode, e.EventId, e.EventName, e.Subtitle as EventSubtitle, e.Date as EventDate, $(job_execution_id) as job_execution_id FROM 
+Venues_CTE as v
 INNER JOIN TicketPurchases AS tp ON v.X = 1
 INNER JOIN Tickets AS t ON t.TicketPurchaseId = tp.TicketPurchaseId
 INNER JOIN Events AS e ON t.EventId = e.EventId
@@ -68,7 +70,7 @@ SELECT * FROM [jobs].[job_executions]
 WHERE job_name = 'Ticket Purchases from all Tenants'
 
 --Stop a running job, requires active job_execution_id from [jobs].[job_executions] view
---EXEC [jobs].[sp_stop_job] 'E20ECAD1-5A80-4CE5-B246-7A7DA3C24A27'
+--EXEC [jobs].[sp_stop_job] 'F15CA86F-5B00-4B47-B3B8-94009A93DC17'
 
 -- Cleanup
 --EXEC [jobs].[sp_delete_job] 'Ticket Purchases from all Tenants'

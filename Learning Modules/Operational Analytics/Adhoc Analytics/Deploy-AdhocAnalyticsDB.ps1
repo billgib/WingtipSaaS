@@ -90,7 +90,8 @@ $commandText = "
     SET QUOTED_IDENTIFIER OFF;
     GO
 
-    CREATE EXTERNAL TABLE [dbo].[Events] (
+    CREATE EXTERNAL TABLE [dbo].[VenueEvents] (
+        [VenueId] INT NOT NULL,
         [EventId] INT NOT NULL,
         [EventName] NVARCHAR (50) NOT NULL,
         [Subtitle] NVARCHAR (50) NULL,
@@ -110,7 +111,8 @@ $commandText = "
     SET QUOTED_IDENTIFIER OFF;
     GO
 
-    CREATE EXTERNAL TABLE [dbo].[TicketPurchases] (
+    CREATE EXTERNAL TABLE [dbo].[VenueTicketPurchases] (
+        [VenueId] INT NOT NULL,
         [TicketPurchaseId] INT NOT NULL,
         [PurchaseDate] DATETIME NOT NULL,
         [PurchaseTotal] MONEY NOT NULL,
@@ -130,7 +132,8 @@ $commandText = "
     SET QUOTED_IDENTIFIER OFF;
     GO
 
-    CREATE EXTERNAL TABLE [dbo].[Tickets] (
+    CREATE EXTERNAL TABLE [dbo].[VenueTickets] (
+        [VenueId] INT NOT NULL,
         [TicketId] INT NOT NULL,
         [RowNumber] INT NOT NULL,
         [SeatNumber] INT NOT NULL,
@@ -152,13 +155,15 @@ $commandText = "
     SET QUOTED_IDENTIFIER OFF;
 
     GO
-    CREATE EXTERNAL TABLE [dbo].[Venue] (
+    CREATE EXTERNAL TABLE [dbo].[Venues] (
+        [VenueId] INT NOT NULL,
         [VenueName] NVARCHAR (50) NOT NULL,
         [VenueType] CHAR (30) NOT NULL,
         [AdminEmail] NCHAR (30) NOT NULL,
-        [AdminPassword] NCHAR (30) NULL,
         [PostalCode] CHAR (10) NULL,
-        [CountryCode] CHAR (3) NOT NULL
+        [CountryCode] CHAR (3) NOT NULL,
+        [Server] NVARCHAR(128) NOT NULL,
+        [DatabaseName] NVARCHAR(128) NOT NULL
     )
         WITH (
         DATA_SOURCE = [WtpTenantDBs],
@@ -187,16 +192,16 @@ $commandText = "
     INSERT INTO [dbo].[VenueTypes]
         ([VenueType],[VenueTypeName],[EventTypeName],[EventTypeShortName],[EventTypeShortNamePlural],[Language])
     VALUES
-        ('MultiPurposeVenue','Multi Purpose Venue','Event', 'Event','Events','en-us'),
-        ('ClassicalConcertHall','Classical Concert Hall','Classical Concert','Concert','Concerts','en-us'),
-        ('JazzClub','Jazz Club','Jazz Session','Session','Sessions','en-us'),
-        ('JudoClub','Judo Club','Judo Tournament','Tournament','Tournaments','en-us'),
-        ('SoccerClub','Soccer Club','Soccer Match', 'Match','Matches','en-us'),
-        ('MotorRacing','Motor Racing','Car Race', 'Race','Races','en-us'),
-        ('DanceStudio', 'Dance Studio', 'Performance', 'Performance', 'Performances','en-us'),
-        ('BluesClub', 'Blues Club', 'Blues Session', 'Session','Sessions','en-us' ),
-        ('RockMusicVenue','Rock Music Venue','Rock Concert','Concert', 'Concerts','en-us'),
-        ('Opera','Opera','Opera','Opera','Operas','en-us');      
+        ('multipurpose','Multi-Purpose','Event', 'Event','Events','en-us'),
+        ('classicalmusic','Classical Music ','Classical Concert','Concert','Concerts','en-us'),
+        ('jazz','Jazz','Jazz Session','Session','Sessions','en-us'),
+        ('judo','Judo','Judo Tournament','Tournament','Tournaments','en-us'),
+        ('soccer','Soccer','Soccer Match', 'Match','Matches','en-us'),
+        ('motorracing','Motor Racing','Car Race', 'Race','Races','en-us'),
+        ('dance', 'Dance', 'Performance', 'Performance', 'Performances','en-us'),
+        ('blues', 'Blues', 'Blues Session', 'Session','Sessions','en-us' ),
+        ('rockmusic','Rock Music','Rock Concert','Concert', 'Concerts','en-us'),
+        ('opera','Opera','Opera','Opera','Operas','en-us');      
     GO
 
     PRINT N'Update complete.';

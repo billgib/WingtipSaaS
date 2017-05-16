@@ -173,7 +173,7 @@ function Get-Catalog
 
     if (!$shardmapManager)
     {
-        throw "Failed to initialize shard map manager from '$(config.CatalogDatabaseName)' database. Ensure catalog is initialized by opening the Events app and try again."
+        throw "Failed to initialize shard map manager from '$($config.CatalogDatabaseName)' database. Ensure catalog is initialized by opening the Events app and try again."
     }
 
     # Initialize shard map
@@ -686,11 +686,13 @@ function Initialize-TenantFromBufferDatabase
  
     $tenantDatabaseName = Get-NormalizedTenantName -TenantName $TenantName
     $serverName = $BufferDatabase.Name.Split("/",2)[0]
+    $sourceDatabase = $BufferDatabase.Name.Split("/",2)[1]
 
     # rename the buffer database and allocate it to this tenant
     $tenantDatabase = Rename-Database `
-                        -SourceDatabase $BufferDatabase `
-                        -TargetDatabaseName $tenantDatabaseName
+                        -SourceDatabaseName $sourceDatabase `
+                        -TargetDatabaseName $tenantDatabaseName `
+                        -ServerName $serverName
 
     # initialize the database for the tenant with venue type and other info from the request
     Initialize-TenantDatabase `
@@ -992,7 +994,11 @@ function New-Tenant
         [string]$PoolName,
 
         [Parameter(Mandatory=$false)]
-        [string]$VenueType
+        [string]$VenueType,
+
+        [Parameter(Mandatory=$false)]
+        [string]$PostalCode = "98052"
+
     )
 
     $WtpUser = $WtpUser.ToLower()
@@ -1022,6 +1028,7 @@ function New-Tenant
         -ElasticPoolName $PoolName `
         -TenantName $TenantName `
         -VenueType $VenueType `
+        -PostalCode $PostalCode `
         -WtpUser $WtpUser
 
     # Register the tenant and database in the catalog
@@ -1214,7 +1221,6 @@ function Remove-CatalogInfoFromTenantDatabase
         -Password $adminPassword `
         -ServerInstance ($TenantDatabase.ServerName + ".database.windows.net") `
         -Database $TenantDatabase.DatabaseName `
-        -ConnectionTimeout 30 `
         -Query $commandText `
 }
 
@@ -1230,12 +1236,15 @@ function Remove-ExtendedDatabase
         [object]$Catalog,
 
         [parameter(Mandatory=$true)]
+        [string]$ServerName,
+
+        [parameter(Mandatory=$true)]
         [string]$DatabaseName
     )
 
     $commandText = "
         DELETE FROM Databases 
-        WHERE DatabaseName = $DatabaseName;"
+        WHERE ServerName = '$ServerName' AND DatabaseName = '$DatabaseName';"
 
     Invoke-SqlAzureWithRetry `
         -ServerInstance $Catalog.FullyQualifiedServerName `
@@ -1243,8 +1252,6 @@ function Remove-ExtendedDatabase
         -Password $config.CatalogAdminPassword `
         -Database $Catalog.Database.DatabaseName `
         -Query $commandText `
-        -ConnectionTimeout 30 `
-        -QueryTimeout 30 `
 }
 
 
@@ -1275,9 +1282,7 @@ function Remove-ExtendedElasticPool{
         -Database $Catalog.Database.DatabaseName `
         -Query $commandText `
         -UserName $config.CatalogAdminUserName `
-        -Password $config.CatalogAdminPassword `
-        -ConnectionTimeout 30 `
-        -QueryTimeout 15     
+        -Password $config.CatalogAdminPassword    
 }
 
 
@@ -1311,7 +1316,7 @@ function Remove-ExtendedServer
 
 <#
 .SYNOPSIS
-    Removes extended tenant and associated database meta data entries from catalog  
+    Removes extended tenant entry from catalog  
 #>
 function Remove-ExtendedTenant
 {
@@ -1339,9 +1344,7 @@ function Remove-ExtendedTenant
     # Delete the tenant name from the Tenants table
     $commandText = "
         DELETE FROM Tenants 
-        WHERE TenantId = $rawkeyHexString;
-        DELETE FROM Databases 
-        WHERE ServerName = '$ServerName' AND DatabaseName = '$DatabaseName';"
+        WHERE TenantId = $rawkeyHexString;"
 
     Invoke-SqlAzureWithRetry `
         -ServerInstance $Catalog.FullyQualifiedServerName `
@@ -1403,7 +1406,7 @@ function Remove-Tenant
         >$null
 
     # Remove Tenant entry from Tenants table and corresponding database entry from Databases table
-    Remove-ExtendedTenantMetadataFromCatalog `
+    Remove-ExtendedTenant `
         -Catalog $Catalog `
         -TenantKey $TenantKey `
         -ServerName ($tenantShard.Location.Server).Split('.')[0] `
@@ -1463,20 +1466,21 @@ function Rename-Database
         [parameter(Mandatory=$true)]
         [string]$TargetDatabaseName,
 
-        [parameter(Mandatory=$false)]
-        [object]$SourceDatabase = $null
+        [parameter(Mandatory=$true)]
+        [string]$SourceDatabaseName,
+
+        [parameter(Mandatory=$true)]
+        [string]$ServerName
     )
 
     $config = Get-Configuration
 
-    $tenantServerName = $SourceDatabase.Name.Split('/',2)[0]
-    $sourceDatabaseName = $SourceDatabase.Name.Split('/',2)[1]
-    $commandText = "ALTER DATABASE [$sourceDatabaseName] MODIFY Name = [$TargetDatabaseName];"
+    $commandText = "ALTER DATABASE [$SourceDatabaseName] MODIFY Name = [$TargetDatabaseName];"
 
     Invoke-SqlAzureWithRetry `
         -Username $config.TenantAdminUserName `
         -Password $config.TenantAdminPassword `
-        -ServerInstance ($tenantServerName + ".database.windows.net") `
+        -ServerInstance ($ServerName + ".database.windows.net") `
         -Database "master" `
         -Query $commandText `
 
@@ -1490,7 +1494,8 @@ function Rename-Database
             $renamedDatabaseObject = Get-AzureRmSqlDatabase `
                                         -ResourceGroupName $Catalog.Database.ResourceGroupName `
                                         -ServerName $tenantServerName `
-                                        -DatabaseName $TargetDatabaseName                                      
+                                        -DatabaseName $TargetDatabaseName `
+                                        >$null                                    
 
             $databaseRenameComplete = $true
         }
@@ -1546,7 +1551,7 @@ function Rename-TenantDatabase
     # Rename active tenant database using T-SQL on the 'master' database
     Write-Output "Renaming SQL database '$($TenantDatabaseObject.DatabaseName)' to '$TargetDatabaseName'..."
 
-    $renamedDatabaseObject = Rename-Database -SourceDatabase $TenantDatabaseObject -TargetDatabaseName $TargetDatabaseName
+    $renamedDatabaseObject = Rename-Database -SourceDatabaseName $TenantDatabaseObject.DatabaseName -ServerName $tenantServerName -TargetDatabaseName $TargetDatabaseName
        
     return $renamedDatabaseObject
 }
